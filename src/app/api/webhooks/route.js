@@ -58,7 +58,7 @@ export async function POST(req) {
 
       if (user) {
         try {
-          await clerkClient.users.updateUserMetadata(id, {
+          await clerkClient.users.updateUser(id, {
             publicMetadata: {
               userMongoId: user._id?.toString() || "",
               isAdmin: user.isAdmin || false,
