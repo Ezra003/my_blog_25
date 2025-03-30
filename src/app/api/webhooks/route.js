@@ -4,66 +4,48 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { createOrUpdateUser, deleteUser } from "@/lib/actions/user";
 
 export async function POST(req) {
-  const SIGNING_SECRET = process.env.SIGNING_SECRET;
+  const SIGNING_SECRET = process.env.WEBHOOK_SECRET || process.env.SIGNING_SECRET;
 
   if (!SIGNING_SECRET) {
-    console.error(
-      "Error: SIGNING_SECRET is not set in the environment variables."
-    );
+    console.error("Error: Webhook signing secret is missing");
     return new Response("Internal Server Error", { status: 500 });
   }
 
-  const wh = new Webhook(SIGNING_SECRET);
-
-  // Get headers
   const headerPayload = headers();
   const svix_id = headerPayload.get("svix-id");
   const svix_timestamp = headerPayload.get("svix-timestamp");
   const svix_signature = headerPayload.get("svix-signature");
 
   if (!svix_id || !svix_timestamp || !svix_signature) {
-    console.error("Error: Missing Svix headers");
     return new Response("Bad Request: Missing Svix headers", { status: 400 });
   }
 
-  // Get body from the request
   let payload;
   try {
     payload = await req.json();
   } catch (error) {
-    console.error("Error parsing request body:", error);
     return new Response("Bad Request: Invalid JSON", { status: 400 });
   }
 
-  const body = JSON.stringify(payload);
-
+  const wh = new Webhook(SIGNING_SECRET);
   let evt;
+
   try {
-    evt = wh.verify(body, {
+    evt = wh.verify(JSON.stringify(payload), {
       "svix-id": svix_id,
       "svix-timestamp": svix_timestamp,
       "svix-signature": svix_signature,
     });
-  } catch (error) {
-    console.error("Error verifying webhook:", error);
+  } catch (err) {
     return new Response("Unauthorized: Verification failed", { status: 401 });
   }
 
-  const { id } = evt?.data;
-  const eventType = evt?.type;
-  console.log(`Received webhook with ID ${id} and event type ${eventType}`);
-  console.log("Webhook payload:", body);
+  const eventType = evt.type;
+  console.log(`Webhook event: ${eventType}`);
 
   try {
     if (eventType === "user.created" || eventType === "user.updated") {
-      const {
-        id,
-        first_name,
-        last_name,
-        image_url,
-        email_addresses,
-        username,
-      } = evt?.data;
+      const { id, first_name, last_name, image_url, email_addresses, username } = evt.data;
 
       const user = await createOrUpdateUser(
         id,
@@ -74,32 +56,28 @@ export async function POST(req) {
         username
       );
 
-      if (user && eventType === "user.created") {
+      if (user) {
         try {
-          console.log("Updating metadata for user ID:", id);
-          console.log("User Mongo ID:", user._id);
-          console.log("Is Admin:", user.isAdmin);
-
           await clerkClient.users.updateUserMetadata(id, {
             publicMetadata: {
-              userMongoId: user._id.toString(), // Ensure this is a string
-              isAdmin: user.isAdmin || false, // Default to false if undefined
+              userMongoId: user._id?.toString() || "",
+              isAdmin: user.isAdmin || false,
             },
           });
+          console.log(`Successfully updated metadata for user ${id}`);
         } catch (error) {
-          console.error("Error updating user metadata:", error);
+          console.error("Error updating Clerk metadata:", error);
+          // Don't return error response here as the user was created successfully
         }
       }
     } else if (eventType === "user.deleted") {
-      const { id } = evt?.data;
+      const { id } = evt.data;
       await deleteUser(id);
-    } else {
-      console.warn(`Unhandled event type: ${eventType}`);
     }
   } catch (error) {
-    console.error("Error processing webhook event:", error);
+    console.error("Error processing webhook:", error);
     return new Response("Internal Server Error", { status: 500 });
   }
 
-  return new Response("Webhook received", { status: 200 });
+  return new Response("Webhook processed successfully", { status: 200 });
 }
