@@ -1,39 +1,41 @@
 import { Webhook } from "svix";
 import { headers } from "next/headers";
-import { clerkClient, WebhookEvent } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/nextjs/server";
 import { createOrUpdateUser, deleteUser } from "@/lib/actions/user";
 
 export async function POST(req) {
-  // Added `req` parameter
   const SIGNING_SECRET = process.env.SIGNING_SECRET;
 
   if (!SIGNING_SECRET) {
-    throw new Error(
-      "Error: Please add SIGNING_SECRET from Clerk Dashboard to .env"
-    );
+    console.error("Error: SIGNING_SECRET is not set in the environment variables.");
+    return new Response("Internal Server Error", { status: 500 });
   }
 
-  // Create a new Svix instance with the secret
   const wh = new Webhook(SIGNING_SECRET);
 
   // Get headers
-  const headerPayload = headers(); // No need to `await`
+  const headerPayload = headers();
   const svix_id = headerPayload.get("svix-id");
   const svix_timestamp = headerPayload.get("svix-timestamp");
   const svix_signature = headerPayload.get("svix-signature");
 
-  // If required headers are missing, return an error response
   if (!svix_id || !svix_timestamp || !svix_signature) {
-    return new Response("Error: Missing Svix headers", { status: 400 });
+    console.error("Error: Missing Svix headers");
+    return new Response("Bad Request: Missing Svix headers", { status: 400 });
   }
 
   // Get body from the request
-  const payload = await req.json(); // `req` is now available
+  let payload;
+  try {
+    payload = await req.json();
+  } catch (error) {
+    console.error("Error parsing request body:", error);
+    return new Response("Bad Request: Invalid JSON", { status: 400 });
+  }
+
   const body = JSON.stringify(payload);
 
   let evt;
-
-  // Verify payload with headers
   try {
     evt = wh.verify(body, {
       "svix-id": svix_id,
@@ -41,21 +43,19 @@ export async function POST(req) {
       "svix-signature": svix_signature,
     });
   } catch (error) {
-    console.error("Error: Could not verify webhook:", error);
-    return new Response("Error: Verification error", { status: 400 });
+    console.error("Error verifying webhook:", error);
+    return new Response("Unauthorized: Verification failed", { status: 401 });
   }
 
-  // Log webhook details
   const { id } = evt?.data;
   const eventType = evt?.type;
-  console.log(`Received webhook with ID ${id} and event type of ${eventType}`);
+  console.log(`Received webhook with ID ${id} and event type ${eventType}`);
   console.log("Webhook payload:", body);
 
-  if (eventType === "user.created" || eventType === "user.updated") {
-    const { id, first_name, last_name, image_url, email_addresses, username } =
-      evt?.data;
+  try {
+    if (eventType === "user.created" || eventType === "user.updated") {
+      const { id, first_name, last_name, image_url, email_addresses, username } = evt?.data;
 
-    try {
       const user = await createOrUpdateUser(
         id,
         first_name,
@@ -64,6 +64,7 @@ export async function POST(req) {
         email_addresses,
         username
       );
+
       if (user && eventType === "user.created") {
         try {
           await clerkClient.users.updateUserMetadata(id, {
@@ -73,23 +74,18 @@ export async function POST(req) {
             },
           });
         } catch (error) {
-          console.log("Error updating user metadata:", error);
+          console.error("Error updating user metadata:", error);
         }
       }
-    } catch (error) {
-      console.log("Error creating or updating user:", error);
-      return new Response("Error occurred", { status: 400 });
-    }
-  }
-
-  if (eventType === "user.deleted") {
-    const { id } = evt?.data;
-    try {
+    } else if (eventType === "user.deleted") {
+      const { id } = evt?.data;
       await deleteUser(id);
-    } catch (error) {
-      console.log("Error deleting user:", error);
-      return new Response("Error occurred", { status: 400 });
+    } else {
+      console.warn(`Unhandled event type: ${eventType}`);
     }
+  } catch (error) {
+    console.error("Error processing webhook event:", error);
+    return new Response("Internal Server Error", { status: 500 });
   }
 
   return new Response("Webhook received", { status: 200 });
