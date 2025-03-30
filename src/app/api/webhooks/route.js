@@ -76,22 +76,14 @@ export async function POST(req) {
 
       if (user && eventType === "user.created") {
         try {
-          // Check if clerkClient.users.updateUserMetadata is defined
-          if (!clerkClient?.users?.updateUserMetadata) {
-            console.error(
-              "Error: clerkClient.users.updateUserMetadata is undefined"
-            );
-            throw new Error("Clerk client is not properly initialized.");
-          }
-
           console.log("Updating metadata for user ID:", id);
           console.log("User Mongo ID:", user._id);
           console.log("Is Admin:", user.isAdmin);
 
-          await clerkClient.users.updateUser(userId, {
+          await clerkClient.users.updateUserMetadata(id, {
             publicMetadata: {
-              userMongoId: user._id,
-              isAdmin: user.isAdmin,
+              userMongoId: user._id.toString(), // Ensure this is a string
+              isAdmin: user.isAdmin || false, // Default to false if undefined
             },
           });
         } catch (error) {
