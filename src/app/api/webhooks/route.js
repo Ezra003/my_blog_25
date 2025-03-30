@@ -7,7 +7,9 @@ export async function POST(req) {
   const SIGNING_SECRET = process.env.SIGNING_SECRET;
 
   if (!SIGNING_SECRET) {
-    console.error("Error: SIGNING_SECRET is not set in the environment variables.");
+    console.error(
+      "Error: SIGNING_SECRET is not set in the environment variables."
+    );
     return new Response("Internal Server Error", { status: 500 });
   }
 
@@ -54,7 +56,14 @@ export async function POST(req) {
 
   try {
     if (eventType === "user.created" || eventType === "user.updated") {
-      const { id, first_name, last_name, image_url, email_addresses, username } = evt?.data;
+      const {
+        id,
+        first_name,
+        last_name,
+        image_url,
+        email_addresses,
+        username,
+      } = evt?.data;
 
       const user = await createOrUpdateUser(
         id,
@@ -69,7 +78,9 @@ export async function POST(req) {
         try {
           // Check if clerkClient.users.updateUserMetadata is defined
           if (!clerkClient?.users?.updateUserMetadata) {
-            console.error("Error: clerkClient.users.updateUserMetadata is undefined");
+            console.error(
+              "Error: clerkClient.users.updateUserMetadata is undefined"
+            );
             throw new Error("Clerk client is not properly initialized.");
           }
 
@@ -77,7 +88,7 @@ export async function POST(req) {
           console.log("User Mongo ID:", user._id);
           console.log("Is Admin:", user.isAdmin);
 
-          await clerkClient.users.updateUserMetadata(id, {
+          await clerkClient.users.updateUser(userId, {
             publicMetadata: {
               userMongoId: user._id,
               isAdmin: user.isAdmin,
